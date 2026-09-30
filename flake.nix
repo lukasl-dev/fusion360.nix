@@ -15,10 +15,13 @@
         { pkgs, ... }:
         let
           fusion360 = pkgs.callPackage ./package.nix { };
+          wine-fusion = pkgs.callPackage ./wine.nix { };
         in
         {
           packages = {
             inherit fusion360;
+            fusion360-patched = pkgs.callPackage ./package.nix { winePackage = wine-fusion; };
+            inherit wine-fusion;
             default = fusion360;
           };
 

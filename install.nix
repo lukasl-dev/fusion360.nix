@@ -172,7 +172,7 @@ writeShellApplication {
       # Autodesk is now finished; request a graceful shutdown of its dedicated
       # Windows session so service-only processes cannot hold the installer open.
       # No force/kill flags: an unexpected application may veto shutdown.
-      ${wine}/bin/wineboot --shutdown
+      "$WINE" wineboot --end-session --shutdown
       "$WINESERVER" -w
       configure_graphics "$backend"
       "$WINESERVER" -w

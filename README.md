@@ -73,10 +73,61 @@ nix run . -- graphics opengl
 nix run .
 ```
 
+If the launcher remains running after you close Fusion, background Windows
+services may still own its prefix lock. Use `nix run . -- stop` to request a
+graceful Windows-session shutdown, then retry changing graphics or updating.
+Save and close documents first. This command never uses force/kill flags; if
+Wine does not stop within 15 seconds, it reports an error rather than killing it.
+
 Use `graphics dxvk` to switch back, or `install --graphics opengl` for a fresh
 OpenGL setup. Unrelated preferences and TLS certificate verification are not
 changed. No version-coupled Qt DLL replacements or unverified SpaceMouse DLLs
 are installed.
+
+The viewport, Qt UI, and embedded Chromium browser use separate rendering
+settings. An optional second argument selects Chromium's backend without
+changing Qt's OpenGL setting:
+
+```console
+nix run . -- graphics dxvk vulkan
+```
+
+This combination has AMD success reports upstream, but is not a universal fix.
+Use `opengles` or `gl` instead of `vulkan` to test alternatives. Omitting the
+second argument preserves your existing Chromium setting (initially `opengles`).
+The wrapper removes inherited Linux Qt platform/theme/plugin paths so Fusion
+uses its bundled Windows Qt.
+
+### Wine black-canvas regression (experimental)
+
+The current upstream tracker reports a black modelling canvas with Wine 11.11+
+that briefly renders when resizing or opening panels. Both DXVK and OpenGL can
+be affected. Wine issue [60190](https://bugs.winehq.org/show_bug.cgi?id=60190)
+proposes an RSA/SymCrypt compatibility fix, reported to restore Fusion in the
+Lolig4 fork. Its diagnosis has not yet been confirmed by Wine maintainers.
+
+An experimental package applies that small source patch to the pinned Wine:
+
+```console
+nix build .#fusion360-patched --out-link result-patched
+# Close Fusion and stop its Wine session before switching runtimes.
+./result-patched/bin/fusion360
+```
+
+It uses the same mutable prefix. Back up the stopped prefix before testing, and
+never run the patched and unpatched runtimes simultaneously. The default package
+remains unpatched pending live validation. Building patched Wine from source may
+take substantial time and disk space.
+
+To isolate Wine's child-window presentation from your Wayland window manager,
+close Fusion and try a virtual desktop:
+
+```console
+nix run . -- run --virtual-desktop 1280x800
+```
+
+This affects only that launch, not saved preferences. Do not mix virtual-desktop
+and normal launches in a running prefix; stop the old Wine session first.
 
 ### Updates
 
@@ -174,6 +225,7 @@ The flat layout keeps runtime dependency declarations beside each command:
 - `install.nix`: `writeShellApplication` for installation and updates.
 - `fusion360.nix`: `writeShellApplication` for launch, sign-in, and diagnostics.
 - `common.nix`: shared prefix ownership, locks, active deployment lookup, and rendering settings.
+- `wine.nix`: experimental Wine RSA compatibility patch for the black-canvas regression.
 - `checks.nix`: non-interactive command-line regression tests.
 
 Shell scripts are syntax-checked and ShellChecked during the Nix build; desktop
@@ -191,6 +243,9 @@ The scripts here are a separate Nix-native implementation.
 - [Official Autodesk admin installer](https://dl.appstreaming.autodesk.com/production/installers/Fusion%20Admin%20Install.exe)
 - [Autodesk deployment documentation](https://www.autodesk.com/support/technical/article/caas/sfdcarticles/sfdcarticles/How-to-deploy-Fusion-360.html)
 - [Existing Fusion Nix wrapper](https://github.com/NullString1/fusion-360-flake)
+- [Current black-workspace report (Codeberg #694)](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/issues/694)
+- [Lolig4 compatibility fork](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux)
+- [Wine RSA/SymCrypt regression report (#60190)](https://bugs.winehq.org/show_bug.cgi?id=60190)
 
 This wrapper is MIT-licensed. Fusion and Microsoft components retain their own
 licenses and are downloaded from their vendors, not redistributed by this flake.

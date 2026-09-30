@@ -31,11 +31,14 @@ writeShellApplication {
       Usage: fusion360 [COMMAND] [OPTIONS]
 
       Commands:
-        run [FILES...]          Launch Fusion (default); never installs implicitly
+        run [--virtual-desktop WIDTHxHEIGHT] [FILES...]
+                               Launch Fusion (default); optional Wine desktop isolation
         install [OPTIONS...]    Install directly from Autodesk
         update [OPTIONS...]     Update, backing up the stopped prefix first
         login URL               Deliver an adskidmgr: browser sign-in callback
-        graphics dxvk|opengl    Change rendering backend while Fusion is stopped
+        stop                    Request graceful shutdown of the Fusion Wine session
+        graphics BACKEND [CHROMIUM]
+                               Set viewport dxvk|opengl; optional Chromium vulkan|opengles|gl
         desktop                 Register launch and login entries for this user
         doctor                  Show Wine, graphics, installation, and login diagnostics
 
@@ -59,7 +62,7 @@ writeShellApplication {
       case "$command" in
         --help|-h|help) usage; exit 0 ;;
         install|update) exec ${installer}/bin/fusion360-install "$command" "$@" ;;
-        run|login|graphics|desktop|doctor) ;;
+        run|login|stop|graphics|desktop|doctor) ;;
         *) fail "Unknown command: $command. Use 'fusion360 --help'." ;;
       esac
 
@@ -132,15 +135,32 @@ writeShellApplication {
           fi
           if [[ -f "$data_dir/installation.json" ]]; then cat "$data_dir/installation.json"; fi
           ;;
+        stop)
+          (( $# == 0 )) || fail "stop takes no arguments."
+          [[ -f "$WINEPREFIX/system.reg" ]] || fail "Install Fusion first."
+          require_display
+          # The launcher holds a shared lock until Wine exits; an exclusive lock
+          # here would prevent stopping the very session that owns it.
+          lock_prefix --shared
+          echo "Requesting graceful shutdown. Save and close any Fusion documents first."
+          "$WINE" wineboot --end-session --shutdown
+          timeout 15 "$WINESERVER" -w || fail "Wine did not stop. Close remaining Windows applications; nothing was force-killed."
+          echo "Fusion Wine session stopped."
+          ;;
         graphics)
-          (( $# == 1 )) || fail "Usage: fusion360 graphics dxvk|opengl"
+          (( $# == 1 || $# == 2 )) || fail "Usage: fusion360 graphics dxvk|opengl [vulkan|opengles|gl]"
+          case "$1" in dxvk|opengl) ;; *) fail "Graphics must be dxvk or opengl." ;; esac
+          case "''${2:-}" in ""|vulkan|opengles|gl) ;; *) fail "Chromium graphics must be vulkan, opengles, or gl." ;; esac
           [[ -f "$WINEPREFIX/system.reg" ]] || fail "Install Fusion first."
           require_display
           lock_prefix --exclusive
           require_stopped_prefix
-          configure_graphics "$1"
-          "$WINESERVER" -w
+          configure_graphics "$1" "''${2:-}"
+          # Registry writes start Wine services even with no application open.
+          "$WINE" wineboot --end-session --shutdown
+          timeout 15 "$WINESERVER" -w || fail "Graphics changed, but Wine did not stop. Nothing was force-killed."
           echo "Viewport backend set to $1; Qt uses OpenGL."
+          [[ -z "''${2:-}" ]] || echo "Chromium backend set to $2."
           ;;
         login)
           (( $# == 1 )) || fail "Usage: fusion360 login 'adskidmgr:/login?code=…'"
@@ -154,6 +174,13 @@ writeShellApplication {
           echo "Login callback delivered to Autodesk Identity Manager."
           ;;
         run)
+          desktop_size=""
+          if [[ "''${1:-}" == --virtual-desktop ]]; then
+            (( $# >= 2 )) || fail "Usage: fusion360 run --virtual-desktop WIDTHxHEIGHT [FILES...]"
+            desktop_size="$2"
+            [[ "$desktop_size" =~ ^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$ ]] || fail "Virtual desktop size must be WIDTHxHEIGHT (100–9999 pixels per dimension)."
+            shift 2
+          fi
           require_display
           lock_prefix --shared
           executable="$(resolve_executable Fusion360.exe)"
@@ -170,7 +197,12 @@ writeShellApplication {
           done
           cd "$(dirname "$executable")"
           rc=0
-          "$WINE" "$executable" "''${files[@]}" >"$log" 2>&1 || rc=$?
+          if [[ -n "$desktop_size" ]]; then
+            windows_executable="$($WINE winepath -w "$executable" | tr -d '\r')"
+            "$WINE" explorer "/desktop=Fusion360,$desktop_size" "$windows_executable" "''${files[@]}" >"$log" 2>&1 || rc=$?
+          else
+            "$WINE" "$executable" "''${files[@]}" >"$log" 2>&1 || rc=$?
+          fi
           # Keep the shared lock while GUI child processes are still alive. Never
           # kill wineserver on exit: that could abort a sign-in or unsaved document.
           "$WINESERVER" -w

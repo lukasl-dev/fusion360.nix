@@ -26,10 +26,22 @@ runCommand "fusion360-cli-checks"
     fusion360 --help > help.txt
     grep -q 'login URL' help.txt
     grep -q 'doctor' help.txt
+    grep -q 'stop ' help.txt
+    grep -q 'virtual-desktop' help.txt
     test ! -e "$HOME/.local/share/fusion360"
 
     if fusion360 nonsense >error.txt 2>&1; then exit 1; fi
     grep -q 'Unknown command' error.txt
+
+    if fusion360 run --virtual-desktop >error.txt 2>&1; then exit 1; fi
+    grep -q 'Usage:' error.txt
+    if fusion360 run --virtual-desktop invalid >error.txt 2>&1; then exit 1; fi
+    grep -q 'Virtual desktop size must be' error.txt
+    test ! -e "$HOME/.local/share/fusion360"
+
+    if fusion360 stop unexpected >error.txt 2>&1; then exit 1; fi
+    grep -q 'stop takes no arguments' error.txt
+    test ! -e "$HOME/.local/share/fusion360"
 
     if fusion360 login 'https://example.com' >error.txt 2>&1; then exit 1; fi
     grep -q 'Expected an adskidmgr' error.txt
@@ -37,6 +49,10 @@ runCommand "fusion360-cli-checks"
 
     if fusion360 install --graphics invalid >error.txt 2>&1; then exit 1; fi
     grep -q 'Graphics must be' error.txt
+
+    if fusion360 graphics dxvk invalid >error.txt 2>&1; then exit 1; fi
+    grep -q 'Chromium graphics must be' error.txt
+    test ! -e "$HOME/.local/share/fusion360"
 
     FUSION360_DATA_HOME=relative fusion360 --help >error.txt 2>&1 && exit 1
     grep -q 'paths must be absolute' error.txt
@@ -66,12 +82,27 @@ runCommand "fusion360-cli-checks"
     import pylnk3
 
     script = pathlib.Path(sys.argv[1]).read_text()
-    graphics = script.split('python3 - "$WINEPREFIX" "$backend" <<\'PY\'\n', 1)[1].split('\nPY', 1)[0]
+    # Only Linux integration settings are removed; explicit graphics diagnostics
+    # remain available. Test the exact packaged environment setup without Wine.
+    import os
+    environment = dict(os.environ)
+    linux_qt = ('QT_QPA_PLATFORM', 'QT_QPA_PLATFORMTHEME', 'QT_STYLE_OVERRIDE',
+                'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH', 'QML2_IMPORT_PATH',
+                'QML_IMPORT_PATH', 'QT_WAYLAND_DISABLE_WINDOWDECORATION')
+    environment.update(dict.fromkeys(linux_qt, 'linux-only'))
+    environment['QT_QUICK_BACKEND'] = 'software'
+    setup = script.split('\nfail()', 1)[0]
+    result = subprocess.run(['bash', '-eu', '-c', setup + '\nenv'], env=environment,
+                            text=True, capture_output=True, check=True)
+    cleaned = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    assert all(key not in cleaned for key in linux_qt)
+    assert cleaned['QT_QUICK_BACKEND'] == 'software'
+
+    graphics = script.split('python3 - "$WINEPREFIX" "$backend" "$chromium" <<\'PY\'\n', 1)[1].split('\nPY', 1)[0]
     resolver = script.split(' - "$WINEPREFIX" "$1" <<\'PY\'\n', 1)[1].split('\nPY', 1)[0]
     display = 'require_display() {' + script.split('require_display() {', 1)[1].split('\n}', 1)[0] + '\n}'
 
     # Mock the session manager, without calling Wine or touching a desktop.
-    import os
     environment = dict(os.environ)
     for key in ('DISPLAY', 'SSH_CONNECTION', 'SSH_TTY'):
         environment.pop(key, None)
@@ -103,11 +134,17 @@ runCommand "fusion360-cli-checks"
         options = user / 'AppData/Roaming/Autodesk/Neutron Platform/Options/NMachineSpecificOptions.xml'
         options.parent.mkdir(parents=True)
         options.write_text('<OptionGroups><Unrelated Value="keep"/></OptionGroups>')
-        for backend, driver in [('dxvk', 'VirtualDeviceDx11'), ('opengl', 'VirtualDeviceGLCore')]:
-            subprocess.run([sys.executable, '-', directory, backend], input=graphics, text=True, check=True)
+        for backend, driver, chromium, expected in (
+            ('dxvk', 'VirtualDeviceDx11', "", 'opengles'),
+            ('dxvk', 'VirtualDeviceDx11', 'vulkan', 'vulkan'),
+            ('opengl', 'VirtualDeviceGLCore', "", 'vulkan'),
+            ('opengl', 'VirtualDeviceGLCore', 'gl', 'gl'),
+        ):
+            subprocess.run([sys.executable, '-', directory, backend, chromium], input=graphics, text=True, check=True)
             tree = ET.parse(options)
             assert tree.find('Unrelated').get('Value') == 'keep'
             assert tree.find('BootstrapOptionsGroup/driverOptionId').get('Value') == driver
+            assert tree.find('CompatibilityGroup/ChromiumGraphicsBackend').get('Value') == expected
             assert 'TrustAllServers' not in options.read_text(encoding='utf-16')
 
         root = prefix / 'drive_c/Program Files/Autodesk/webdeploy/production'

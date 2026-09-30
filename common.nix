@@ -48,6 +48,13 @@ in
       # Let the packaged desktop entries own Linux integration.
       export WINEDLLOVERRIDES="winemenubuilder.exe=d''${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
 
+      # Fusion bundles Windows Qt. Linux desktop integration must not select its
+      # platform plugins, styles, or plugin search paths. Keep rendering/debug
+      # overrides such as QT_QUICK_BACKEND available for explicit diagnostics.
+      unset QT_QPA_PLATFORM QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE
+      unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML2_IMPORT_PATH QML_IMPORT_PATH
+      unset QT_WAYLAND_DISABLE_WINDOWDECORATION
+
       fail() { echo "fusion360: $*" >&2; exit 1; }
 
       require_display() {
@@ -70,12 +77,12 @@ in
         umask 077
         mkdir -p "$data_dir" "$state_dir"
         exec 9>"$data_dir/prefix.lock"
-        flock "$1" --nonblock 9 || fail "Fusion is running, or another installation is in progress."
+        flock "$1" --nonblock 9 || fail "Fusion is running, or another installation is in progress. Close Fusion; use 'fusion360 stop' if background Wine services remain."
       }
 
       require_stopped_prefix() {
         # Never kill Wine processes, including a pending login, to make an update succeed.
-        timeout 5 "$WINESERVER" -w || fail "Wine is still running in this prefix. Close Fusion before changing it."
+        timeout 5 "$WINESERVER" -w || fail "Wine is still running in this prefix. Close Fusion and run 'fusion360 stop' before changing it."
       }
 
       resolve_executable() {
@@ -161,7 +168,9 @@ in
 
       configure_graphics() {
         local backend="$1"
+        local chromium="''${2:-}"
         case "$backend" in dxvk|opengl) ;; *) fail "Graphics must be dxvk or opengl." ;; esac
+        case "$chromium" in ""|vulkan|opengles|gl) ;; *) fail "Chromium graphics must be vulkan, opengles, or gl." ;; esac
         "$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
         "$WINE" reg add 'HKCU\Software\Wine\DllOverrides' /v d3d9 /d builtin /f >/dev/null
         local dll override=builtin
@@ -169,12 +178,12 @@ in
         for dll in d3d11 dxgi d3d10core; do
           "$WINE" reg add 'HKCU\Software\Wine\DllOverrides' /v "$dll" /d "$override" /f >/dev/null
         done
-        python3 - "$WINEPREFIX" "$backend" <<'PY'
+        python3 - "$WINEPREFIX" "$backend" "$chromium" <<'PY'
       import pathlib
       import sys
       import xml.etree.ElementTree as ET
 
-      prefix, backend = pathlib.Path(sys.argv[1]), sys.argv[2]
+      prefix, backend, chromium = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
       users = [p for p in (prefix / "drive_c/users").iterdir()
                if p.is_dir() and p.name.lower() not in ("public", "default", "default user", "all users")]
       for user in users:
@@ -189,7 +198,6 @@ in
           for group_name, key, value in (
               ("BootstrapOptionsGroup", "driverOptionId", "VirtualDeviceDx11" if backend == "dxvk" else "VirtualDeviceGLCore"),
               ("CompatibilityGroup", "graphicsApiOptionId", "OpenGL"),
-              ("CompatibilityGroup", "ChromiumGraphicsBackend", "opengles"),
           ):
               group = root.find(group_name)
               if group is None:
@@ -198,6 +206,12 @@ in
               if option is None:
                   option = ET.SubElement(group, key)
               option.set("Value", value)
+          group = root.find("CompatibilityGroup")
+          option = group.find("ChromiumGraphicsBackend")
+          if option is None:
+              option = ET.SubElement(group, "ChromiumGraphicsBackend", Value="opengles")
+          if chromium:
+              option.set("Value", chromium)
           # Never relax TLS verification or replace unrelated user preferences.
           path.parent.mkdir(parents=True, exist_ok=True)
           temporary = path.with_suffix(".tmp")
