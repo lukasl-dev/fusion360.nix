@@ -4,9 +4,9 @@ Autodesk Fusion on x86-64 NixOS, using a dedicated, Nix-pinned Wine environment.
 The package downloads Fusion directly from Autodesk; it does not run a Linux
 distribution installer or require Bottles, Distrobox, `nix-ld`, or an FHS shell.
 
-**Status:** installation and launch to the sign-in screen have been tested on
+**Status:** installation, browser sign-in, and launch to the modelling workspace have been tested on
 NixOS 26.05 with Hyprland/Xwayland, Radeon 860M, Wine Staging 11.16, and DXVK 2.7.1
-(September 2026). Sign-in, modelling, save/export, and updates are not yet verified.
+(September 2026). Modelling, save/export, and updates are not yet verified.
 Autodesk does not support Linux.
 You need an Autodesk account and a valid Fusion entitlement, including an
 eligible personal-use or educational license.
@@ -55,6 +55,11 @@ nix run . -- login 'adskidmgr:/login?code=…'
 The callback contains a short-lived credential: do not post it in logs or issues.
 The login command does not print it. Successful delivery to Identity Manager
 does not itself prove that Autodesk accepted the login.
+
+If a local terminal or browser handler lacks `DISPLAY`, the wrapper reads the
+local Xwayland display from your systemd user manager. An existing `DISPLAY` is
+preserved; SSH sessions never automatically attach to the local desktop. If
+discovery fails, use a desktop terminal with `DISPLAY` set.
 
 ### Graphics
 

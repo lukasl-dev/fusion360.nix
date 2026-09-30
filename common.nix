@@ -7,6 +7,7 @@
   gnugrep,
   gnused,
   util-linux,
+  systemd,
 }:
 
 let
@@ -21,6 +22,7 @@ in
     gnugrep
     gnused
     util-linux
+    systemd
   ];
 
   # Shared prefix ownership and graphics policy, not a general Wine framework.
@@ -49,6 +51,18 @@ in
       fail() { echo "fusion360: $*" >&2; exit 1; }
 
       require_display() {
+        # Local terminals and browser handlers may lack the desktop environment.
+        # Read only the local X11 display from this user's session manager; never
+        # evaluate its shell-escaped output or redirect an SSH session silently.
+        if [[ -z "''${DISPLAY:-}" && -z "''${SSH_CONNECTION:-}" && -z "''${SSH_TTY:-}" ]]; then
+          local key value
+          while IFS='=' read -r key value; do
+            if [[ "$key" == DISPLAY && "$value" =~ ^:[0-9]+(\.[0-9]+)?$ ]]; then
+              export DISPLAY="$value"
+              break
+            fi
+          done < <(timeout 2 systemctl --user show-environment 2>/dev/null || true)
+        fi
         [[ -n "''${DISPLAY:-}" ]] || fail "No X11 display. Run from your desktop terminal (Xwayland on Wayland)."
       }
 

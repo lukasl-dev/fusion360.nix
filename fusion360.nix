@@ -103,7 +103,10 @@ writeShellApplication {
       Terminal=false
       EOF
           update-desktop-database "$applications"
-          xdg-mime default fusion360-login.desktop x-scheme-handler/adskidmgr
+          # Home Manager may own an immutable mimeapps.list with this already set.
+          if [[ "$(xdg-mime query default x-scheme-handler/adskidmgr)" != fusion360-login.desktop ]]; then
+            xdg-mime default fusion360-login.desktop x-scheme-handler/adskidmgr
+          fi
           [[ "$(xdg-mime query default x-scheme-handler/adskidmgr)" == fusion360-login.desktop ]] \
             || fail "The desktop files were created, but your MIME configuration did not accept the login handler."
           echo "Registered Fusion and adskidmgr: login for this user."

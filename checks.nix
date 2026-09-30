@@ -20,6 +20,8 @@ runCommand "fusion360-cli-checks"
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
     unset DISPLAY WAYLAND_DISPLAY
+    # Do not let a developer's live desktop hide the no-display error cases.
+    export SSH_CONNECTION=test
 
     fusion360 --help > help.txt
     grep -q 'login URL' help.txt
@@ -66,6 +68,34 @@ runCommand "fusion360-cli-checks"
     script = pathlib.Path(sys.argv[1]).read_text()
     graphics = script.split('python3 - "$WINEPREFIX" "$backend" <<\'PY\'\n', 1)[1].split('\nPY', 1)[0]
     resolver = script.split(' - "$WINEPREFIX" "$1" <<\'PY\'\n', 1)[1].split('\nPY', 1)[0]
+    display = 'require_display() {' + script.split('require_display() {', 1)[1].split('\n}', 1)[0] + '\n}'
+
+    # Mock the session manager, without calling Wine or touching a desktop.
+    import os
+    environment = dict(os.environ)
+    for key in ('DISPLAY', 'SSH_CONNECTION', 'SSH_TTY'):
+        environment.pop(key, None)
+    harness = """
+    fail() { echo "$*" >&2; exit 1; }
+    systemctl() { printf '%s\\n' "$SESSION_ENV"; }
+    timeout() { shift; "$@"; }
+    """ + display + '\nrequire_display; printf "%s" "$DISPLAY"'
+    def get_display(**values):
+        return subprocess.run(['bash', '-eu', '-c', harness], env=environment | values,
+                              text=True, capture_output=True)
+    result = get_display(SESSION_ENV='OTHER=ignore\nDISPLAY=:7.0')
+    assert result.returncode == 0 and result.stdout == ':7.0', result.stderr
+    result = get_display(DISPLAY=':9', SESSION_ENV='DISPLAY=:7')
+    assert result.returncode == 0 and result.stdout == ':9'
+    for values in (
+        {'SESSION_ENV': ""},
+        {'SESSION_ENV': 'DISPLAY=remote.example:0'},
+        {'SESSION_ENV': 'DISPLAY=$(exit 42)'},
+        {'SESSION_ENV': 'DISPLAY=:7', 'SSH_CONNECTION': 'remote'},
+        {'SESSION_ENV': 'DISPLAY=:7', 'SSH_TTY': '/dev/pts/1'},
+    ):
+        result = get_display(**values)
+        assert result.returncode != 0 and 'No X11 display' in result.stderr
 
     with tempfile.TemporaryDirectory() as directory:
         prefix = pathlib.Path(directory)
