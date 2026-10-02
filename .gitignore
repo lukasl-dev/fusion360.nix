@@ -7,3 +7,8 @@ result-*
 
 # Ignore NixOS interactive test driver history
 **/.nixos-test-history
+
+# Python bytecode and local quality-check caches
+__pycache__/
+.mypy_cache/
+.ruff_cache/

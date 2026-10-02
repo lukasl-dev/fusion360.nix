@@ -258,22 +258,36 @@ upstream's `TrustAllServers` workaround is deliberately not used.
 ```console
 nix build
 nix flake check
+nix build .#checks.x86_64-linux.cli --no-link
 nix fmt
 nix develop
 ```
 
-The flat layout keeps runtime dependency declarations beside each command:
+The Nix files stay flat, with dependency declarations beside each command.
+Substantial Python lives in ordinary modules under `python/`:
 
 - `flake.nix`: flake-parts outputs, lockfile inputs, development shell, checks.
 - `package.nix`: package composition and desktop entries.
 - `install.nix`: `writeShellApplication` for installation and updates.
 - `fusion360.nix`: `writeShellApplication` for launch, sign-in, and diagnostics.
-- `common.nix`: shared prefix ownership, locks, active deployment lookup, and rendering settings.
+- `common.nix`: shared environment, prefix ownership, locks, and graphics policy.
 - `wine.nix`: Wine RSA compatibility patch for the black-canvas regression.
-- `checks.nix`: non-interactive command-line regression tests.
+- `checks.nix`: Python quality checks and non-interactive regression tests.
+- `python/deployment.py`: installer-owned launch pointers and installation provenance.
+- `python/graphics.py`: targeted, atomic rendering-preference updates.
+- `python/desktop.py`: Desktop Entry argument quoting.
+- `python/identity.py`: bounded Identity Manager startup and log lifecycle tracking.
+- `python/test_*.py`: helper, startup, and packaged-command regression tests.
+- `python/pyproject.toml`: strict mypy and Ruff configuration.
+- `python/pylnk3.pyi`: the small typed boundary for the untyped shortcut library.
 
 Shell scripts are syntax-checked and ShellChecked during the Nix build; desktop
-entries are validated too. Automated checks do not claim graphical compatibility.
+entries are validated too. The CLI check runs strict mypy, Ruff lint/format checks,
+and unittest against ordinary Python modules, without starting Wine or touching
+the real Fusion prefix. `nix develop` provides the interpreter, mypy, and Ruff;
+run `cd python && mypy .` to check types locally.
+
+Automated checks do not claim graphical compatibility.
 The acceptance test is: sign in; sketch and extrude; save and reopen; export STEP;
 restart; update without losing account state or preferences.
 

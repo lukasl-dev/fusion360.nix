@@ -41,6 +41,9 @@
               fusion360
               pkgs.nixfmt
               pkgs.shellcheck
+              fusion360.common.python
+              pkgs.mypy
+              pkgs.ruff
             ];
           };
 

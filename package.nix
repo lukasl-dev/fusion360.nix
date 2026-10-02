@@ -40,7 +40,10 @@ symlinkJoin {
     desktop
     login
   ];
-  passthru = { inherit wine installer launcher; };
+  passthru = {
+    inherit wine installer launcher;
+    inherit common;
+  };
   meta = {
     description = "Autodesk Fusion installer and launcher with a pinned Wine environment";
     homepage = "https://github.com/lukasl-dev/fusion360.nix";

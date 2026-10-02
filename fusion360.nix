@@ -27,102 +27,11 @@ writeShellApplication {
       start_identity_manager() {
         local identity
         identity="$(resolve_executable AdskIdentityManager.exe)"
+
         # Starting Identity before Fusion avoids racing two SSO instances. Wait
         # for readiness rather than sleeping through Fusion's 15-second deadline.
-        python3 - "$WINEPREFIX" "$WINE" "$identity" "$log" "$desktop_size" <<'PY'
-      import os
-      import pathlib
-      import re
-      import subprocess
-      import sys
-      import time
-
-      prefix, wine, identity, launch_log, desktop = sys.argv[1:]
-      prefix, identity = pathlib.Path(prefix), pathlib.Path(identity)
-      users = prefix / "drive_c/users"
-      paths = [user / "AppData/Local/Autodesk/Identity Services/Log/IdServices.log"
-               for user in users.iterdir() if user.is_dir()]
-      readers = {}
-      states = {}
-
-      def identity_running():
-          for process in pathlib.Path("/proc").iterdir():
-              if not process.name.isdigit():
-                  continue
-              try:
-                  arguments = (process / "cmdline").read_bytes().split(b"\0")
-                  environment = (process / "environ").read_bytes().split(b"\0")
-                  if (any(argument.lower().endswith(b"adskidentitymanager.exe") for argument in arguments[:2])
-                          and ("WINEPREFIX=" + str(prefix)).encode() in environment):
-                      return True
-              except OSError:
-                  continue
-          return False
-
-      def observe(path, line, fresh):
-          match = re.search(rb"\[AdskIdentityManager:(\d+),\s*\d+\] \[AdskIdentityManager INFO\] (.*)", line)
-          if not match:
-              return False
-          pid, message = match.groups()
-          key = (path, pid)
-          if message.startswith(b"Starting Autodesk IDSDK Server process"):
-              states[key] = "starting"
-          elif message.startswith(b"SSO Server is ready"):
-              states[key] = "ready"
-              return fresh
-          elif b"Quitting" in message or b"App state set to Quit" in message:
-              states[key] = "stopped"
-          duplicate = re.search(rb"Quitting since another instance \(pid (\d+)\) is already running", message)
-          return bool(fresh and duplicate and states.get((path, duplicate[1])) == "ready" and identity_running())
-
-      # Historical readiness is not a new startup signal. Retain only lifecycle
-      # states so a fresh duplicate-instance report can reuse a live ready SSO.
-      for path in paths:
-          try:
-              file = path.open("rb")
-          except FileNotFoundError:
-              continue
-          for line in file:
-              observe(path, line, False)
-          readers[path] = (file, b"", file.tell())
-
-      arguments = [wine, str(identity)]
-      if desktop:
-          windows_identity = "C:\\" + str(identity.relative_to(prefix / "drive_c")).replace("/", "\\")
-          arguments = [wine, "explorer", "/desktop=Fusion360," + desktop, windows_identity]
-      with open(launch_log, "ab") as output:
-          process = subprocess.Popen(arguments, cwd=identity.parent, stdout=output, stderr=output, close_fds=True)
-      deadline = time.monotonic() + 30
-      while time.monotonic() < deadline:
-          for path in paths:
-              # Drain an old descriptor before following a rotated/recreated log.
-              if path in readers:
-                  file, pending, offset = readers[path]
-                  if os.fstat(file.fileno()).st_size < offset:
-                      offset = 0
-                      pending = b""
-                  file.seek(offset)
-                  lines = (pending + file.read()).split(b"\n")
-                  readers[path] = (file, lines.pop(), file.tell())
-                  if any(observe(path, line, True) for line in lines):
-                      print("Identity Manager is ready.")
-                      sys.exit(0)
-              try:
-                  stat = path.stat()
-              except FileNotFoundError:
-                  continue
-              if path not in readers:
-                  readers[path] = (path.open("rb"), b"", 0)
-              else:
-                  old = os.fstat(readers[path][0].fileno())
-                  if (old.st_dev, old.st_ino) != (stat.st_dev, stat.st_ino):
-                      readers[path][0].close()
-                      readers[path] = (path.open("rb"), b"", 0)
-          if process.poll() not in (None, 0):
-              raise SystemExit("Identity Manager failed to start. Inspect the launch log; no processes were killed.")
-          time.sleep(0.1)
-      raise SystemExit("Identity Manager did not report readiness within 30 seconds. Close Fusion and try 'fusion360 stop'; no account data was reset or processes killed.")
-      PY
+        ${common.python}/bin/python3 ${common.pythonSource}/identity.py \
+          "$WINEPREFIX" "$WINE" "$identity" "$log" "$desktop_size"
       }
 
       usage() {
@@ -162,8 +71,12 @@ writeShellApplication {
 
       command="''${1:-run}"
       (( $# == 0 )) || shift
+
       case "$command" in
-        --help|-h|help) usage; exit 0 ;;
+        --help|-h|help)
+          usage
+          exit 0
+          ;;
         install|update) exec ${installer}/bin/fusion360-install "$command" "$@" ;;
         run|login|stop|graphics|desktop|doctor) ;;
         *) fail "Unknown command: $command. Use 'fusion360 --help'." ;;
@@ -174,22 +87,18 @@ writeShellApplication {
           (( $# == 0 )) || fail "desktop takes no arguments."
           applications="''${XDG_DATA_HOME:-$HOME/.local/share}/applications"
           mkdir -p "$applications" "''${XDG_CONFIG_HOME:-$HOME/.config}"
+
           # A GC root keeps these absolute store paths valid after a one-off nix run.
           root="''${XDG_STATE_HOME:-$HOME/.local/state}/fusion360/desktop-root"
           mkdir -p "$(dirname "$root")"
           command -v nix >/dev/null || fail "nix is needed to register persistent desktop entries."
           nix-store --add-root "$root" --indirect --realise ${placeholder "out"} >/dev/null
+
           # Desktop Entry argument escaping differs from shell escaping. Preserve
           # custom prefix locations without embedding a shell command.
-          desktop_environment="$(python3 - "$data_dir" "$cache_dir" "$state_dir" <<'PY'
-      import sys
-      def quote(value):
-          value = value.replace("\\", "\\\\\\\\").replace('"', '\\\\"').replace('`', '\\\\`').replace('$', '\\\\$').replace('%', '%%')
-          return '"' + value + '"'
-      print(" ".join(quote(key + "=" + value) for key, value in zip(
-          ("FUSION360_DATA_HOME", "FUSION360_CACHE_HOME", "FUSION360_STATE_HOME"), sys.argv[1:])))
-      PY
-          )"
+          desktop_environment="$(${common.python}/bin/python3 ${common.pythonSource}/desktop.py \
+            "$data_dir" "$cache_dir" "$state_dir")"
+
           cat > "$applications/fusion360.desktop" <<EOF
       [Desktop Entry]
       Type=Application
@@ -209,12 +118,14 @@ writeShellApplication {
       Terminal=false
       EOF
           update-desktop-database "$applications"
+
           # Home Manager may own an immutable mimeapps.list with this already set.
           if [[ "$(xdg-mime query default x-scheme-handler/adskidmgr)" != fusion360-login.desktop ]]; then
             xdg-mime default fusion360-login.desktop x-scheme-handler/adskidmgr
           fi
           [[ "$(xdg-mime query default x-scheme-handler/adskidmgr)" == fusion360-login.desktop ]] \
             || fail "The desktop files were created, but your MIME configuration did not accept the login handler."
+
           echo "Registered Fusion and adskidmgr: login for this user."
           ;;
         doctor)
@@ -237,12 +148,15 @@ writeShellApplication {
             glxinfo -B || true
             vulkaninfo --summary || true
           fi
-          if [[ -f "$data_dir/installation.json" ]]; then cat "$data_dir/installation.json"; fi
+          if [[ -f "$data_dir/installation.json" ]]; then
+            cat "$data_dir/installation.json"
+          fi
           ;;
         stop)
           (( $# == 0 )) || fail "stop takes no arguments."
           [[ -f "$WINEPREFIX/system.reg" ]] || fail "Install Fusion first."
           require_display
+
           # The launcher holds a shared lock until Wine exits; an exclusive lock
           # here would prevent stopping the very session that owns it.
           lock_prefix --shared
@@ -253,23 +167,34 @@ writeShellApplication {
           ;;
         graphics)
           (( $# == 1 || $# == 2 )) || fail "Usage: fusion360 graphics dxvk|opengl [vulkan|opengles|gl]"
-          case "$1" in dxvk|opengl) ;; *) fail "Graphics must be dxvk or opengl." ;; esac
-          case "''${2:-}" in ""|vulkan|opengles|gl) ;; *) fail "Chromium graphics must be vulkan, opengles, or gl." ;; esac
+          case "$1" in
+            dxvk|opengl) ;;
+            *) fail "Graphics must be dxvk or opengl." ;;
+          esac
+          case "''${2:-}" in
+            ""|vulkan|opengles|gl) ;;
+            *) fail "Chromium graphics must be vulkan, opengles, or gl." ;;
+          esac
+
           [[ -f "$WINEPREFIX/system.reg" ]] || fail "Install Fusion first."
           require_display
           lock_prefix --exclusive
           require_stopped_prefix
           configure_graphics "$1" "''${2:-}"
+
           # Registry writes start Wine services even with no application open.
           "$WINE" wineboot --end-session --shutdown
           timeout 15 "$WINESERVER" -w || fail "Graphics changed, but Wine did not stop. Nothing was force-killed."
+
           echo "Viewport backend set to $1; Qt uses OpenGL."
           [[ -z "''${2:-}" ]] || echo "Chromium backend set to $2."
           ;;
         login)
           (( $# == 1 )) || fail "Usage: fusion360 login 'adskidmgr:/login?code=…'"
+
           # No eval, sh -c, or logging of authentication codes.
           [[ "$1" == adskidmgr:/login\?* || "$1" == adskidmgr://login\?* ]] || fail "Expected an adskidmgr: login callback."
+
           require_display
           lock_prefix --shared
           executable="$(resolve_executable AdskIdentityManager.exe)"
@@ -285,6 +210,7 @@ writeShellApplication {
             [[ "$desktop_size" =~ ^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$ ]] || fail "Virtual desktop size must be WIDTHxHEIGHT (100–9999 pixels per dimension)."
             shift 2
           fi
+
           require_display
           lock_prefix --shared
           executable="$(resolve_executable Fusion360.exe)"
@@ -292,6 +218,7 @@ writeShellApplication {
           umask 077
           log="$state_dir/run-$(date +%Y%m%dT%H%M%S)-$$.log"
           echo "Launching Fusion. Log: $log"
+
           # A working directory beside Fusion is needed by some bundled components.
           # Convert local file arguments before changing directory.
           files=()
@@ -299,8 +226,10 @@ writeShellApplication {
             file="$(realpath -e "$argument")"
             files+=("$($WINE winepath -w "$file" | tr -d '\r')")
           done
+
           start_identity_manager
           cd "$(dirname "$executable")"
+
           rc=0
           if [[ -n "$desktop_size" ]]; then
             windows_executable="$($WINE winepath -w "$executable" | tr -d '\r')"
@@ -308,6 +237,7 @@ writeShellApplication {
           else
             "$WINE" "$executable" "''${files[@]}" >>"$log" 2>&1 || rc=$?
           fi
+
           # Keep the shared lock while GUI child processes are still alive. Never
           # kill wineserver on exit: that could abort a sign-in or unsaved document.
           "$WINESERVER" -w

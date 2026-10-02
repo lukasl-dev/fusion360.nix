@@ -31,38 +31,63 @@ writeShellApplication {
 
       operation="''${1:-install}"
       shift || true
+
       # Nixpkgs' multimedia Wine is a shell wrapper. Winetricks otherwise mistakes
       # it for an unknown architecture and tries a nonexistent wine64 command.
       export WINE64="$WINE"
       if [[ -x "${wine}/bin/.wine" ]]; then
         export WINE_BIN="${wine}/bin/.wine"
       fi
+
       backend="''${FUSION360_GRAPHICS:-}"
       installer=""
       backup=true
+
       while (( $# )); do
         case "$1" in
-          --help|-h) usage; exit 0 ;;
+          --help|-h)
+            usage
+            exit 0
+            ;;
           --graphics)
             (( $# >= 2 )) || fail "--graphics requires a backend."
-            backend="$2"; shift 2 ;;
+            backend="$2"
+            shift 2
+            ;;
           --installer)
             (( $# >= 2 )) || fail "--installer requires a file."
-            installer="$(realpath -e "$2")"; shift 2 ;;
-          --no-backup) backup=false; shift ;;
+            installer="$(realpath -e "$2")"
+            shift 2
+            ;;
+          --no-backup)
+            backup=false
+            shift
+            ;;
           *) fail "Unknown install option: $1" ;;
         esac
       done
-      case "$operation" in install|update) ;; *) fail "Unknown operation: $operation" ;; esac
-      if [[ -z "$backend" && -f "$data_dir/graphics" ]]; then backend="$(cat "$data_dir/graphics")"; fi
+
+      case "$operation" in
+        install|update) ;;
+        *) fail "Unknown operation: $operation" ;;
+      esac
+
+      # An update keeps the prefix's selection unless explicitly overridden.
+      if [[ -z "$backend" && -f "$data_dir/graphics" ]]; then
+        backend="$(cat "$data_dir/graphics")"
+      fi
       backend="''${backend:-opengl}"
-      case "$backend" in dxvk|opengl) ;; *) fail "Graphics must be dxvk or opengl." ;; esac
+      case "$backend" in
+        dxvk|opengl) ;;
+        *) fail "Graphics must be dxvk or opengl." ;;
+      esac
 
       require_display
       lock_prefix --exclusive
       if [[ -f "$data_dir/setup/prefix" && ! -f "$WINEPREFIX/system.reg" ]]; then
         fail "Setup markers exist but the Wine prefix is missing. Restore the prefix or use a fresh FUSION360_DATA_HOME."
       fi
+
       if [[ -f "$data_dir/installation.json" && "$operation" == install ]]; then
         if [[ ! -f "$data_dir/setup/dependencies-v1" ]]; then
           fail "Installation metadata exists without its setup state. Use doctor to inspect the prefix."
@@ -72,14 +97,17 @@ writeShellApplication {
         echo "Fusion is already installed. Use 'fusion360 update' to update it."
         exit 0
       fi
+
       if [[ "$operation" == update && ! -f "$data_dir/installation.json" ]]; then
         fail "Fusion is not installed. Use 'fusion360 install' first."
       fi
+
       mkdir -p "$cache_dir" "$state_dir" "$data_dir/setup"
       umask 077
       log="$state_dir/$operation-$(date +%Y%m%dT%H%M%S)-$$.log"
       echo "Installation log: $log"
       exec > >(tee -a "$log") 2>&1
+
       report_failure() {
         local rc=$?
         if (( rc != 0 )); then
@@ -91,6 +119,7 @@ writeShellApplication {
       if [[ -f "$WINEPREFIX/system.reg" ]]; then
         require_stopped_prefix
       fi
+
       if [[ "$operation" == update && "$backup" == true ]]; then
         snapshot="$data_dir/backups/$(date +%Y%m%dT%H%M%S)-$$"
         echo "Backing up the stopped prefix to $snapshot"
@@ -127,6 +156,7 @@ writeShellApplication {
         done
         touch "$data_dir/setup/dependencies-v1"
       fi
+
       winetricks -q win11
       for dll in msvcp140 mfc140u; do
         "$WINE" reg add 'HKCU\Software\Wine\DllOverrides' /v "$dll" /d native /f
@@ -165,11 +195,13 @@ writeShellApplication {
       fi
       [[ -f "$installer" ]] || fail "Installer not found: $installer"
       [[ "$(head -c 2 "$installer")" == MZ ]] || fail "The downloaded file is not a Windows executable: $installer"
+
       echo "Running Autodesk's installer ($operation)..."
       arguments=(--quiet)
       [[ "$operation" != update ]] || arguments+=(--process update)
       "$WINE" "$installer" "''${arguments[@]}"
       "$WINE" taskkill /IM MicrosoftEdgeUpdate.exe /F >/dev/null 2>&1 || true
+
       # Autodesk is now finished; request a graceful shutdown of its dedicated
       # Windows session so service-only processes cannot hold the installer open.
       # No force/kill flags: an unexpected application may veto shutdown.
@@ -184,29 +216,9 @@ writeShellApplication {
       identity="$(resolve_executable AdskIdentityManager.exe)"
       echo "Active Fusion: $executable"
       echo "Identity Manager: $identity"
-      python3 - "$WINEPREFIX" "$data_dir" "$installer" <<'PY'
-      import datetime
-      import hashlib
-      import json
-      import pathlib
-      import sys
 
-      prefix, data, installer = map(pathlib.Path, sys.argv[1:])
-      executables = list(prefix.glob("drive_c/Program Files/Autodesk/webdeploy/production/*/Fusion360.exe"))
-      if not executables:
-          raise SystemExit("Installer exited without producing Fusion360.exe; installation not marked complete.")
-      with installer.open("rb") as file:
-          digest = hashlib.file_digest(file, "sha256").hexdigest()
-      path = data / "installation.json"
-      temporary = path.with_suffix(".tmp")
-      temporary.write_text(json.dumps({
-          "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-          "installer_sha256": digest,
-          "wine_version": "${wine.version}",
-          "deployments": [str(p.relative_to(prefix)) for p in executables],
-      }, indent=2) + "\n")
-      temporary.replace(path)
-      PY
+      ${common.python}/bin/python3 ${common.pythonSource}/deployment.py record \
+        "$WINEPREFIX" "$data_dir" "$installer" "${wine.version}"
       echo "Installation completed. Run 'fusion360' and sign in with your Autodesk account."
     '';
 }
