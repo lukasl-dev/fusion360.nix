@@ -139,6 +139,22 @@ nix build .#fusion360-unpatched --out-link result-unpatched
 Both packages use the same mutable prefix. Back up the stopped prefix before
 switching runtimes, and never run patched and unpatched Wine simultaneously.
 
+#### Black dialog-backdrop window (not yet validated)
+
+Opening the new-design dialog with the `+` button has produced a separate,
+movable black window in front of the dialog on Hyprland/Xwayland. Local window
+inspection confirmed another floating window owned by Fusion; a mismanaged
+dim/blur backdrop is the working hypothesis, not a confirmed diagnosis.
+
+The default Wine build also includes Cryinkfly's
+[`wine-captionless-popups.patch`](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/src/commit/53b02038548f01a6e0a1fa2def0a9b545f1561c1/files/setup/data/wine-captionless-popups.patch).
+It changes Wine's X11 driver to keep captionless popup windows out of ordinary
+Linux window-manager control. It is not a Hyprland patch and does not disable
+window management for all Wine windows. The patch is included for testing;
+its effect on this dialog and other menus/popups is not yet verified locally.
+It leaves the working graphics, browser sandbox, and Identity startup settings
+unchanged. Rebuilding Wine and stopping the old session are required to test it.
+
 #### Blank Data Panel and browser sandbox
 
 Wine 11.16 also has a Chromium sandbox compatibility issue reported in
@@ -275,7 +291,8 @@ Substantial Python lives in ordinary modules under `python/`:
 - `install.nix`: `writeShellApplication` for installation and updates.
 - `fusion360.nix`: `writeShellApplication` for launch, sign-in, and diagnostics.
 - `common.nix`: shared environment, prefix ownership, locks, and graphics policy.
-- `wine.nix`: Wine RSA compatibility patch for the black-canvas regression.
+- `wine/default.nix`: the package-specific Wine build.
+- `wine/*.patch`: attributed RSA and captionless-popup compatibility patches.
 - `checks.nix`: Python quality checks and non-interactive regression tests.
 - `python/deployment.py`: installer-owned launch pointers and installation provenance.
 - `python/graphics.py`: targeted, atomic rendering-preference updates.

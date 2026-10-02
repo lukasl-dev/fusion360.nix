@@ -33,6 +33,9 @@ runCommand "fusion360-checks"
       if lib.versionAtLeast fusion360.wine.version "11.1" then "supported" else "too-old"
     }' = supported
     test '${if fusion360.wine.fusionRsaWorkaround or false then "patched" else "unpatched"}' = patched
+    test '${
+      if fusion360.wine.fusionCaptionlessPopupWorkaround or false then "patched" else "unpatched"
+    }' = patched
 
     # Type-check the same sources used by the packaged commands, including tests.
     # The narrow local pylnk3 stub describes only the library boundary we use.

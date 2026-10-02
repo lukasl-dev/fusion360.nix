@@ -3,7 +3,7 @@
   callPackage,
   symlinkJoin,
   makeDesktopItem,
-  winePackage ? callPackage ./wine.nix { },
+  winePackage ? callPackage ./wine { },
 }:
 
 let

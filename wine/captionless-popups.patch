@@ -1,0 +1,20 @@
+Keep captionless Windows popups from becoming ordinary managed X11 windows.
+Target: Fusion's suspected dialog backdrop appearing as a black floating window.
+This compatibility workaround still needs live validation with this Wine build.
+
+From Cryinkfly's Autodesk Fusion on Linux project at commit
+53b02038548f01a6e0a1fa2def0a9b545f1561c1 (MIT-licensed upstream project).
+https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/src/commit/53b02038548f01a6e0a1fa2def0a9b545f1561c1/files/setup/data/wine-captionless-popups.patch
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -444,6 +444,8 @@ static BOOL is_window_managed( HWND hwnd, UINT swp_flags, BOOL fullscreen )
+     /* child windows are not managed */
+     style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
+     if ((style & (WS_CHILD|WS_POPUP)) == WS_CHILD) return FALSE;
++    /* captionless popups are not managed */
++    if ((style & (WS_POPUP|WS_CAPTION)) == WS_POPUP) return FALSE;
+     /* activated windows are managed */
+     if (!(swp_flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW))) return TRUE;
+     if (hwnd == get_active_window()) return TRUE;
