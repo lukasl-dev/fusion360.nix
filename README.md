@@ -139,21 +139,32 @@ nix build .#fusion360-unpatched --out-link result-unpatched
 Both packages use the same mutable prefix. Back up the stopped prefix before
 switching runtimes, and never run patched and unpatched Wine simultaneously.
 
-#### Black dialog-backdrop window (not yet validated)
+#### Dialog backdrops and popup stacking (revised workaround, not yet validated)
 
 Opening the new-design dialog with the `+` button has produced a separate,
 movable black window in front of the dialog on Hyprland/Xwayland. Local window
 inspection confirmed another floating window owned by Fusion; a mismanaged
 dim/blur backdrop is the working hypothesis, not a confirmed diagnosis.
 
-The default Wine build also includes Cryinkfly's
-[`wine-captionless-popups.patch`](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/src/commit/53b02038548f01a6e0a1fa2def0a9b545f1561c1/files/setup/data/wine-captionless-popups.patch).
-It changes Wine's X11 driver to keep captionless popup windows out of ordinary
-Linux window-manager control. It is not a Hyprland patch and does not disable
-window management for all Wine windows. The patch is included for testing;
-its effect on this dialog and other menus/popups is not yet verified locally.
-It leaves the working graphics, browser sandbox, and Identity startup settings
-unchanged. Rebuilding Wine and stopping the old session are required to test it.
+The default Wine build includes Daniel Stuart's
+[refinement of the captionless-popup patch](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/pulls/1),
+merged into Lolig4's compatibility fork at commit
+`df329fc0363531f353ab88fae2fb106512865813`. Its upstream report describes an
+unclickable file dialog covered by its own dimming layer, and palettes or menus
+staying above other applications.
+
+The earlier patch rejected all captionless popups before Wine's activation
+checks. This revision keeps activated modal windows and owned tool-window
+palettes under Linux window-manager control so they can be stacked normally,
+while leaving remaining captionless menus and tooltips unmanaged. It is a Wine
+X11-driver workaround, not a Hyprland/KDE patch or a blanket click-through rule.
+
+The revision is included for testing; its effect on Open, save/export, the `+`
+dialog, menus, and palettes is not yet verified with this build. It leaves the
+working graphics, browser sandbox, and Identity startup settings unchanged.
+Rebuild Wine, back up the stopped prefix, and fully stop the old Wine session
+before switching. Starting a new launcher while the old session survives does
+not establish that the application has loaded the new Wine driver.
 
 #### Blank Data Panel and browser sandbox
 
@@ -360,6 +371,8 @@ The scripts here are a separate Nix-native implementation.
 - [Existing Fusion Nix wrapper](https://github.com/NullString1/fusion-360-flake)
 - [Current black-workspace report (Codeberg #694)](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/issues/694)
 - [Lolig4 compatibility fork](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux)
+- [Dialog and palette stacking fix (Lolig4 PR #1)](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/pulls/1)
+- [Dimmed, unclickable file-dialog report (Codeberg #554)](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/issues/554)
 - [Wine RSA/SymCrypt regression report (#60190)](https://bugs.winehq.org/show_bug.cgi?id=60190)
 - [Wine 11.16 blank Data Panel / sandbox report (Lolig4 #10)](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/issues/10)
 

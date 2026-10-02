@@ -7,8 +7,8 @@ wineWow64Packages.stagingFull.overrideAttrs (old: {
     # Preserve ordinary RSA; handle Fusion's legacy public exponent 1.
     ./symcrypt-rsa-exponent1.patch
 
-    # Keep captionless popups under Wine's control instead of exposing them as
-    # ordinary managed windows to the Linux compositor. Needs live validation.
+    # Keep transient menus unmanaged, but let the compositor stack activated
+    # modal windows and owned palettes. Needs live validation with this build.
     ./captionless-popups.patch
   ];
   passthru = (old.passthru or { }) // {

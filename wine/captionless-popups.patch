@@ -1,20 +1,43 @@
-Keep captionless Windows popups from becoming ordinary managed X11 windows.
-Target: Fusion's suspected dialog backdrop appearing as a black floating window.
-This compatibility workaround still needs live validation with this Wine build.
+Keep transient captionless popups unmanaged without overriding modal activation.
+Keep owned tool-window palettes managed so they stack with their application.
+Targets: Fusion dialog backdrops blocking controls and palettes covering other apps.
+This revised workaround still needs live validation with this Wine build.
 
-From Cryinkfly's Autodesk Fusion on Linux project at commit
-53b02038548f01a6e0a1fa2def0a9b545f1561c1 (MIT-licensed upstream project).
-https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/src/commit/53b02038548f01a6e0a1fa2def0a9b545f1561c1/files/setup/data/wine-captionless-popups.patch
+From Daniel Stuart's refinement in Lolig4's Autodesk Fusion on Linux project,
+merged as df329fc0363531f353ab88fae2fb106512865813 (MIT-licensed project).
+Replaces the earlier Cryinkfly captionless-popup workaround.
+https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/pulls/1
+https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/src/commit/df329fc0363531f353ab88fae2fb106512865813/files/setup/data/fusion-patches/wine-captionless-popups.patch
 
 diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
 --- a/dlls/winex11.drv/window.c
 +++ b/dlls/winex11.drv/window.c
-@@ -444,6 +444,8 @@ static BOOL is_window_managed( HWND hwnd, UINT swp_flags, BOOL fullscreen )
+@@ -444,6 +444,14 @@ static BOOL is_window_managed( HWND hwnd, UINT swp_flags, BOOL fullscreen )
      /* child windows are not managed */
      style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
      if ((style & (WS_CHILD|WS_POPUP)) == WS_CHILD) return FALSE;
-+    /* captionless popups are not managed */
-+    if ((style & (WS_POPUP|WS_CAPTION)) == WS_POPUP) return FALSE;
++    /* Owned tool-window popups (e.g. Autodesk Fusion's docked palettes) are managed.
++     * Unmanaged they become override-redirect windows that the compositor keeps above
++     * every other application; managed, the WM stacks them with their owner so they
++     * drop behind other apps as they do on Windows. */
++    if ((style & (WS_CHILD|WS_POPUP)) == WS_POPUP &&
++        (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_TOOLWINDOW) &&
++        NtUserGetWindowRelative( hwnd, GW_OWNER ))
++        return TRUE;
      /* activated windows are managed */
      if (!(swp_flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW))) return TRUE;
      if (hwnd == get_active_window()) return TRUE;
+@@ -458,6 +466,13 @@ static BOOL is_window_managed( HWND hwnd, UINT swp_flags, BOOL fullscreen )
+         /* full-screen popup windows are managed */
+         if (fullscreen) return TRUE;
+     }
++    /* Captionless popups that reach this point are transient UI - menus, tooltips,
++     * combobox dropdowns - and must stay override-redirect, or the WM decorates and
++     * restacks them. Deliberately placed AFTER the activation and fullscreen tests
++     * above: an activated captionless popup (Fusion's modal scrim, its selection
++     * lists) keeps stock Wine's managed behaviour, instead of being pinned above
++     * every application and above its own modal dialog. */
++    if ((style & (WS_POPUP|WS_CAPTION)) == WS_POPUP) return FALSE;
+     /* application windows are managed */
+     ex_style = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE );
+     if (ex_style & WS_EX_APPWINDOW) return TRUE;
