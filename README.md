@@ -4,6 +4,10 @@ Autodesk Fusion on x86-64 NixOS, using a dedicated, Nix-pinned Wine environment.
 The package downloads Fusion directly from Autodesk; it does not run a Linux
 distribution installer or require Bottles, Distrobox, `nix-ld`, or an FHS shell.
 
+> [!IMPORTANT]
+> This is an unofficial Nix flake for Autodesk Fusion. It is not affiliated with
+> or endorsed by Autodesk. Autodesk does not support Fusion on Linux.
+
 **Status:** installation, browser sign-in, sketch interaction, a shaded solid body,
 and the populated Data Panel have been observed on NixOS 26.05 with
 Hyprland/Xwayland, Radeon 860M, patched Wine Staging 11.16, and OpenGL Core
@@ -11,18 +15,17 @@ Hyprland/Xwayland, Radeon 860M, patched Wine Staging 11.16, and OpenGL Core
 some UI positioning/text artifacts remain. This is not a claim that every
 Fusion feature or GPU works. The default launcher has also been cold-started
 successfully with authentication and Data Panel loading confirmed in its logs.
-Autodesk does not support Linux.
 You need an Autodesk account and a valid Fusion entitlement, including an
 eligible personal-use or educational license.
 
 ## Usage
 
 ```console
-nix run . -- --help
-nix run . -- doctor
-nix run . -- install
-nix run . -- desktop
-nix run .
+nix run github:lukasl-dev/fusion360.nix -- --help
+nix run github:lukasl-dev/fusion360.nix -- doctor
+nix run github:lukasl-dev/fusion360.nix -- install
+nix run github:lukasl-dev/fusion360.nix -- desktop
+nix run github:lukasl-dev/fusion360.nix
 ```
 
 `install` creates a dedicated prefix and installs the fonts and Windows runtimes,
@@ -53,7 +56,7 @@ If the browser fails to open the registered handler, obtain the callback URL
 from the browser's developer tools and submit it manually:
 
 ```console
-nix run . -- login 'adskidmgr:/login?code=…'
+nix run github:lukasl-dev/fusion360.nix -- login 'adskidmgr:/login?code=…'
 ```
 
 The callback contains a short-lived credential: do not post it in logs or issues.
@@ -82,13 +85,14 @@ backend; to apply the tested combination to an older installation, close Fusion
 and its Wine session first:
 
 ```console
-nix run . -- graphics opengl gl
-nix run .
+nix run github:lukasl-dev/fusion360.nix -- graphics opengl gl
+nix run github:lukasl-dev/fusion360.nix
 ```
 
 If the launcher remains running after you close Fusion, background Windows
-services may still own its prefix lock. Use `nix run . -- stop` to request a
-graceful Windows-session shutdown, then retry changing graphics or updating.
+services may still own its prefix lock. Use
+`nix run github:lukasl-dev/fusion360.nix -- stop` to request a graceful
+Windows-session shutdown, then retry changing graphics or updating.
 Save and close documents first. This command never uses force/kill flags; if
 Wine does not stop within 15 seconds, it reports an error rather than killing it.
 
@@ -103,7 +107,7 @@ settings. An optional second argument selects Chromium's backend without
 changing Qt's OpenGL setting:
 
 ```console
-nix run . -- graphics dxvk vulkan
+nix run github:lukasl-dev/fusion360.nix -- graphics dxvk vulkan
 ```
 
 This combination has AMD success reports upstream, but is not a universal fix.
@@ -149,7 +153,7 @@ use this with a trusted Fusion installation and account content. To opt out and
 retest sandbox support with a compatible runtime:
 
 ```console
-FUSION360_WEBENGINE_SANDBOX=1 nix run .
+FUSION360_WEBENGINE_SANDBOX=1 nix run github:lukasl-dev/fusion360.nix
 ```
 
 Stop the existing Wine session before changing this environment setting; running
@@ -167,7 +171,7 @@ To isolate Wine's child-window presentation from your Wayland window manager,
 close Fusion and try a virtual desktop:
 
 ```console
-nix run . -- run --virtual-desktop 1280x800
+nix run github:lukasl-dev/fusion360.nix -- run --virtual-desktop 1280x800
 ```
 
 This affects only that launch, not saved preferences. Do not mix virtual-desktop
@@ -178,7 +182,7 @@ and normal launches in a running prefix; stop the old Wine session first.
 Close Fusion and its Wine processes, then:
 
 ```console
-nix run . -- update
+nix run github:lukasl-dev/fusion360.nix -- update
 ```
 
 Updates download the current official admin installer and use Autodesk's update
@@ -191,7 +195,7 @@ You may supply a previously downloaded official installer for installation or
 updates:
 
 ```console
-nix run . -- install --installer '/path/to/Fusion Admin Install.exe'
+nix run github:lukasl-dev/fusion360.nix -- install --installer '/path/to/Fusion Admin Install.exe'
 ```
 
 `nix flake update` updates the packaged Linux environment, **not** Fusion.
