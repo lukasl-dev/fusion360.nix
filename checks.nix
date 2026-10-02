@@ -40,7 +40,7 @@ runCommand "fusion360-checks"
     # Type-check the same sources used by the packaged commands, including tests.
     # The narrow local pylnk3 stub describes only the library boundary we use.
     cd ${pythonSource}
-    for module in deployment desktop graphics identity; do
+    for module in deployment desktop graphics identity uninstall; do
       test -f "$module.py"
     done
     mypy --cache-dir "$TMPDIR/mypy" .

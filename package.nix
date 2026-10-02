@@ -10,7 +10,15 @@ let
   wine = winePackage;
   common = callPackage ./common.nix { inherit wine; };
   installer = callPackage ./install.nix { inherit common wine; };
-  launcher = callPackage ./fusion360.nix { inherit common installer wine; };
+  uninstaller = callPackage ./uninstall.nix { inherit common; };
+  launcher = callPackage ./fusion360.nix {
+    inherit
+      common
+      installer
+      uninstaller
+      wine
+      ;
+  };
   desktop = makeDesktopItem {
     name = "fusion360";
     desktopName = "Autodesk Fusion";
@@ -37,11 +45,13 @@ symlinkJoin {
   paths = [
     launcher
     installer
+    uninstaller
     desktop
     login
   ];
   passthru = {
     inherit wine installer launcher;
+    inherit uninstaller;
     inherit common;
   };
   meta = {

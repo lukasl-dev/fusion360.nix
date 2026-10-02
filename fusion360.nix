@@ -2,6 +2,7 @@
   writeShellApplication,
   common,
   installer,
+  uninstaller,
   wine,
   xdg-utils,
   desktop-file-utils,
@@ -45,6 +46,8 @@ writeShellApplication {
                                Launch Fusion (default); optional Wine desktop isolation
         install [OPTIONS...]    Install directly from Autodesk
         update [OPTIONS...]     Update, backing up the stopped prefix first
+        uninstall [--purge [--yes]]
+                               Remove desktop integration; optionally delete local state
         login URL               Deliver an adskidmgr: browser sign-in callback
         stop                    Request graceful shutdown of the Fusion Wine session
         graphics BACKEND [CHROMIUM]
@@ -78,6 +81,7 @@ writeShellApplication {
           exit 0
           ;;
         install|update) exec ${installer}/bin/fusion360-install "$command" "$@" ;;
+        uninstall) exec ${uninstaller}/bin/fusion360-uninstall "$@" ;;
         run|login|stop|graphics|desktop|doctor) ;;
         *) fail "Unknown command: $command. Use 'fusion360 --help'." ;;
       esac

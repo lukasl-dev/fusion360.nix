@@ -219,6 +219,40 @@ Conversely, `fusion360 update` updates the mutable Autodesk installation, **not*
 the lockfile. Nix rollback does not restore the Wine prefix. Wine upgrades may
 also migrate the prefix, so keep a stopped-prefix backup before changing Wine.
 
+### Uninstalling
+
+To remove desktop entries registered by `desktop`, their login association, and
+their GC root, while **keeping the Wine prefix, account data, documents, backups,
+installers, and logs**:
+
+```console
+nix run github:lukasl-dev/fusion360.nix -- uninstall
+```
+
+This only removes user-owned entries matching the selected Fusion state paths.
+Home Manager/NixOS-owned entries and MIME configuration are left alone; remove
+the package and login association from that configuration separately. Other MIME
+handlers and associations are preserved. The Nix store and system Wine are not
+deleted; unreferenced packages can later be garbage-collected normally.
+
+For complete removal of the dedicated local Fusion state, first save/export any
+needed local documents, close Fusion, and stop its Wine session. Then:
+
+```console
+nix run github:lukasl-dev/fusion360.nix -- uninstall --purge
+```
+
+**Purge deletes the prefix (including local documents and account data), backups,
+downloaded installers, and logs.** Cloud projects and documents saved outside
+these directories are not deleted. It prints the deletion targets and requires
+typing `PURGE`; scripts must opt in with `--purge --yes`. It never kills Wine.
+
+Purge respects custom `FUSION360_{DATA,CACHE,STATE}_HOME` paths but refuses broad,
+overlapping, symlinked, or shared directories containing unrecognized files.
+Keep diagnostic files elsewhere or remove them manually before purging. The
+empty data directory and its `prefix.lock` remain so another command cannot
+bypass the lock by recreating it while uninstall is still running.
+
 ## NixOS integration
 
 Add this flake as an input, then install its package through NixOS or Home Manager:
@@ -289,6 +323,7 @@ Substantial Python lives in ordinary modules under `python/`:
 - `flake.nix`: flake-parts outputs, lockfile inputs, development shell, checks.
 - `package.nix`: package composition and desktop entries.
 - `install.nix`: `writeShellApplication` for installation and updates.
+- `uninstall.nix`: `writeShellApplication` for desktop removal and explicit purge.
 - `fusion360.nix`: `writeShellApplication` for launch, sign-in, and diagnostics.
 - `common.nix`: shared environment, prefix ownership, locks, and graphics policy.
 - `wine/default.nix`: the package-specific Wine build.
@@ -298,6 +333,7 @@ Substantial Python lives in ordinary modules under `python/`:
 - `python/graphics.py`: targeted, atomic rendering-preference updates.
 - `python/desktop.py`: Desktop Entry argument quoting.
 - `python/identity.py`: bounded Identity Manager startup and log lifecycle tracking.
+- `python/uninstall.py`: ownership-aware desktop cleanup and guarded state deletion.
 - `python/test_*.py`: helper, startup, and packaged-command regression tests.
 - `python/pyproject.toml`: strict mypy and Ruff configuration.
 - `python/pylnk3.pyi`: the small typed boundary for the untyped shortcut library.

@@ -23,6 +23,7 @@ class RuntimeTests(unittest.TestCase):
             "XDG_DATA_HOME",
             "XDG_CACHE_HOME",
             "XDG_STATE_HOME",
+            "XDG_CONFIG_HOME",
             "FUSION360_DATA_HOME",
             "FUSION360_CACHE_HOME",
             "FUSION360_STATE_HOME",
@@ -54,6 +55,7 @@ class RuntimeTests(unittest.TestCase):
             "login URL",
             "doctor",
             "stop ",
+            "uninstall",
             "virtual-desktop",
             "default: opengl",
             "FUSION360_WEBENGINE_SANDBOX=1",
@@ -71,6 +73,8 @@ class RuntimeTests(unittest.TestCase):
             (("install", "--graphics", "invalid"), "Graphics must be"),
             (("graphics", "dxvk", "invalid"), "Chromium graphics must be"),
             (("run",), "No X11 display"),
+            (("uninstall", "--invalid"), "Unknown uninstall option"),
+            (("uninstall", "--yes"), "--yes requires --purge"),
         )
         for arguments, message in cases:
             with self.subTest(arguments=arguments):
@@ -92,6 +96,36 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("No X11 display", result.stderr)
         self.assertNotIn(callback, result.stdout + result.stderr)
         self.assertFalse(injected.exists())
+
+    def test_uninstall_help_and_default_keep_state(self) -> None:
+        result = self.launch("uninstall", "--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--purge", result.stdout)
+        self.assertFalse((self.home / ".local/share/fusion360").exists())
+
+        # Desktop-only removal must not initialize or query a Wine prefix.
+        data = self.home / ".local/share/fusion360"
+        data.mkdir(parents=True)
+        sentinel = data / "local-document"
+        sentinel.write_text("keep")
+        for _ in range(2):
+            result = self.launch("uninstall")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("state was kept", result.stdout)
+            self.assertEqual(sentinel.read_text(), "keep")
+            self.assertFalse((data / "prefix.lock").exists())
+
+    def test_purge_requires_confirmation_without_a_terminal(self) -> None:
+        result = self.launch("uninstall", "--purge")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("confirmation", result.stderr)
+        self.assertFalse((self.home / ".local/share/fusion360").exists())
+
+    def test_confirmed_empty_purge_does_not_start_wine(self) -> None:
+        result = self.launch("uninstall", "--purge", "--yes")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = self.home / ".local/share/fusion360"
+        self.assertEqual([path.name for path in data.iterdir()], ["prefix.lock"])
 
     def shell_environment(
         self, values: dict[str, str]
