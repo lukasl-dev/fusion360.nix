@@ -55,6 +55,18 @@ in
       unset QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QML2_IMPORT_PATH QML_IMPORT_PATH
       unset QT_WAYLAND_DISABLE_WINDOWDECORATION
 
+      # Wine 11.16's CreateDesktop security handling breaks Chromium's sandbox,
+      # leaving Fusion's Data Panel blank. This reduces browser isolation; users
+      # can opt back in to retest with a compatible Wine build. Qt checks whether
+      # its variable exists, so setting QTWEBENGINE_DISABLE_SANDBOX=0 is NOT an
+      # opt-out; the enabled branch must remove it from the environment.
+      # https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/issues/10
+      case "''${FUSION360_WEBENGINE_SANDBOX:-0}" in
+        0) export QTWEBENGINE_DISABLE_SANDBOX=1 ;;
+        1) unset QTWEBENGINE_DISABLE_SANDBOX ;;
+        *) echo "FUSION360_WEBENGINE_SANDBOX must be 0 or 1." >&2; exit 2 ;;
+      esac
+
       fail() { echo "fusion360: $*" >&2; exit 1; }
 
       require_display() {
@@ -209,7 +221,7 @@ in
           group = root.find("CompatibilityGroup")
           option = group.find("ChromiumGraphicsBackend")
           if option is None:
-              option = ET.SubElement(group, "ChromiumGraphicsBackend", Value="opengles")
+              option = ET.SubElement(group, "ChromiumGraphicsBackend", Value="gl")
           if chromium:
               option.set("Value", chromium)
           # Never relax TLS verification or replace unrelated user preferences.

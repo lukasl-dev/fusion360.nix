@@ -3,8 +3,7 @@
   callPackage,
   symlinkJoin,
   makeDesktopItem,
-  wineWow64Packages,
-  winePackage ? wineWow64Packages.stagingFull,
+  winePackage ? callPackage ./wine.nix { },
 }:
 
 let

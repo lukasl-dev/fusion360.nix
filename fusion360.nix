@@ -24,6 +24,107 @@ writeShellApplication {
     common.text
     # bash
     + ''
+      start_identity_manager() {
+        local identity
+        identity="$(resolve_executable AdskIdentityManager.exe)"
+        # Starting Identity before Fusion avoids racing two SSO instances. Wait
+        # for readiness rather than sleeping through Fusion's 15-second deadline.
+        python3 - "$WINEPREFIX" "$WINE" "$identity" "$log" "$desktop_size" <<'PY'
+      import os
+      import pathlib
+      import re
+      import subprocess
+      import sys
+      import time
+
+      prefix, wine, identity, launch_log, desktop = sys.argv[1:]
+      prefix, identity = pathlib.Path(prefix), pathlib.Path(identity)
+      users = prefix / "drive_c/users"
+      paths = [user / "AppData/Local/Autodesk/Identity Services/Log/IdServices.log"
+               for user in users.iterdir() if user.is_dir()]
+      readers = {}
+      states = {}
+
+      def identity_running():
+          for process in pathlib.Path("/proc").iterdir():
+              if not process.name.isdigit():
+                  continue
+              try:
+                  arguments = (process / "cmdline").read_bytes().split(b"\0")
+                  environment = (process / "environ").read_bytes().split(b"\0")
+                  if (any(argument.lower().endswith(b"adskidentitymanager.exe") for argument in arguments[:2])
+                          and ("WINEPREFIX=" + str(prefix)).encode() in environment):
+                      return True
+              except OSError:
+                  continue
+          return False
+
+      def observe(path, line, fresh):
+          match = re.search(rb"\[AdskIdentityManager:(\d+),\s*\d+\] \[AdskIdentityManager INFO\] (.*)", line)
+          if not match:
+              return False
+          pid, message = match.groups()
+          key = (path, pid)
+          if message.startswith(b"Starting Autodesk IDSDK Server process"):
+              states[key] = "starting"
+          elif message.startswith(b"SSO Server is ready"):
+              states[key] = "ready"
+              return fresh
+          elif b"Quitting" in message or b"App state set to Quit" in message:
+              states[key] = "stopped"
+          duplicate = re.search(rb"Quitting since another instance \(pid (\d+)\) is already running", message)
+          return bool(fresh and duplicate and states.get((path, duplicate[1])) == "ready" and identity_running())
+
+      # Historical readiness is not a new startup signal. Retain only lifecycle
+      # states so a fresh duplicate-instance report can reuse a live ready SSO.
+      for path in paths:
+          try:
+              file = path.open("rb")
+          except FileNotFoundError:
+              continue
+          for line in file:
+              observe(path, line, False)
+          readers[path] = (file, b"", file.tell())
+
+      arguments = [wine, str(identity)]
+      if desktop:
+          windows_identity = "C:\\" + str(identity.relative_to(prefix / "drive_c")).replace("/", "\\")
+          arguments = [wine, "explorer", "/desktop=Fusion360," + desktop, windows_identity]
+      with open(launch_log, "ab") as output:
+          process = subprocess.Popen(arguments, cwd=identity.parent, stdout=output, stderr=output, close_fds=True)
+      deadline = time.monotonic() + 30
+      while time.monotonic() < deadline:
+          for path in paths:
+              # Drain an old descriptor before following a rotated/recreated log.
+              if path in readers:
+                  file, pending, offset = readers[path]
+                  if os.fstat(file.fileno()).st_size < offset:
+                      offset = 0
+                      pending = b""
+                  file.seek(offset)
+                  lines = (pending + file.read()).split(b"\n")
+                  readers[path] = (file, lines.pop(), file.tell())
+                  if any(observe(path, line, True) for line in lines):
+                      print("Identity Manager is ready.")
+                      sys.exit(0)
+              try:
+                  stat = path.stat()
+              except FileNotFoundError:
+                  continue
+              if path not in readers:
+                  readers[path] = (path.open("rb"), b"", 0)
+              else:
+                  old = os.fstat(readers[path][0].fileno())
+                  if (old.st_dev, old.st_ino) != (stat.st_dev, stat.st_ino):
+                      readers[path][0].close()
+                      readers[path] = (path.open("rb"), b"", 0)
+          if process.poll() not in (None, 0):
+              raise SystemExit("Identity Manager failed to start. Inspect the launch log; no processes were killed.")
+          time.sleep(0.1)
+      raise SystemExit("Identity Manager did not report readiness within 30 seconds. Close Fusion and try 'fusion360 stop'; no account data was reset or processes killed.")
+      PY
+      }
+
       usage() {
         cat <<'EOF'
       Autodesk Fusion on NixOS
@@ -43,7 +144,7 @@ writeShellApplication {
         doctor                  Show Wine, graphics, installation, and login diagnostics
 
       Installation options:
-        --graphics dxvk|opengl  Initial viewport backend (default: dxvk)
+        --graphics dxvk|opengl  Initial viewport backend (default: opengl)
         --installer FILE       Use a previously downloaded Autodesk installer
         --no-backup            Skip the update backup
 
@@ -54,6 +155,8 @@ writeShellApplication {
 
       XDG_DATA_HOME, XDG_CACHE_HOME, and XDG_STATE_HOME are respected.
       Override individual locations with FUSION360_{DATA,CACHE,STATE}_HOME.
+      Qt WebEngine's sandbox is disabled for Wine compatibility (reduced isolation).
+      Set FUSION360_WEBENGINE_SANDBOX=1 to opt out of this workaround.
       EOF
       }
 
@@ -123,7 +226,8 @@ writeShellApplication {
           echo "Logs: $state_dir"
           echo "DISPLAY: ''${DISPLAY:-unset}"
           echo "WAYLAND_DISPLAY: ''${WAYLAND_DISPLAY:-unset} (Xwayland is used)"
-          echo "Graphics: $(cat "$data_dir/graphics" 2>/dev/null || echo 'dxvk (default)')"
+          echo "Graphics: $(cat "$data_dir/graphics" 2>/dev/null || echo 'opengl (fresh-install default)')"
+          echo "Qt WebEngine sandbox: $([[ -v QTWEBENGINE_DISABLE_SANDBOX ]] && echo 'disabled (Wine compatibility workaround)' || echo 'enabled (explicit opt-in)')"
           echo "64-bit graphics drivers: $(readlink -f /run/opengl-driver 2>/dev/null || echo missing)"
           echo "32-bit graphics drivers: $(readlink -f /run/opengl-driver-32 2>/dev/null || echo missing) (legacy Wine only)"
           echo "Login handler: $(xdg-mime query default x-scheme-handler/adskidmgr || true)"
@@ -195,13 +299,14 @@ writeShellApplication {
             file="$(realpath -e "$argument")"
             files+=("$($WINE winepath -w "$file" | tr -d '\r')")
           done
+          start_identity_manager
           cd "$(dirname "$executable")"
           rc=0
           if [[ -n "$desktop_size" ]]; then
             windows_executable="$($WINE winepath -w "$executable" | tr -d '\r')"
-            "$WINE" explorer "/desktop=Fusion360,$desktop_size" "$windows_executable" "''${files[@]}" >"$log" 2>&1 || rc=$?
+            "$WINE" explorer "/desktop=Fusion360,$desktop_size" "$windows_executable" "''${files[@]}" >>"$log" 2>&1 || rc=$?
           else
-            "$WINE" "$executable" "''${files[@]}" >"$log" 2>&1 || rc=$?
+            "$WINE" "$executable" "''${files[@]}" >>"$log" 2>&1 || rc=$?
           fi
           # Keep the shared lock while GUI child processes are still alive. Never
           # kill wineserver on exit: that could abort a sign-in or unsaved document.

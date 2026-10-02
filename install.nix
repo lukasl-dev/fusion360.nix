@@ -24,6 +24,7 @@ writeShellApplication {
              fusion360 update [--installer /path/to/installer.exe] [--no-backup]
 
       Installs directly from Autodesk into a dedicated Wine prefix.
+      Fresh installs default to OpenGL Core, Qt OpenGL, and Chromium gl.
       Update backs up the stopped prefix first. Sign-in is interactive.
       EOF
       }
@@ -54,7 +55,7 @@ writeShellApplication {
       done
       case "$operation" in install|update) ;; *) fail "Unknown operation: $operation" ;; esac
       if [[ -z "$backend" && -f "$data_dir/graphics" ]]; then backend="$(cat "$data_dir/graphics")"; fi
-      backend="''${backend:-dxvk}"
+      backend="''${backend:-opengl}"
       case "$backend" in dxvk|opengl) ;; *) fail "Graphics must be dxvk or opengl." ;; esac
 
       require_display

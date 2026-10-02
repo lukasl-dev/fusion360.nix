@@ -15,13 +15,16 @@
         { pkgs, ... }:
         let
           fusion360 = pkgs.callPackage ./package.nix { };
-          wine-fusion = pkgs.callPackage ./wine.nix { };
         in
         {
           packages = {
             inherit fusion360;
-            fusion360-patched = pkgs.callPackage ./package.nix { winePackage = wine-fusion; };
-            inherit wine-fusion;
+            # Keep the earlier experimental name usable without a second runtime.
+            fusion360-patched = fusion360;
+            fusion360-unpatched = pkgs.callPackage ./package.nix {
+              winePackage = pkgs.wineWow64Packages.stagingFull;
+            };
+            wine-fusion = fusion360.wine;
             default = fusion360;
           };
 

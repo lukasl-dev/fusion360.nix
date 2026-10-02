@@ -4,9 +4,13 @@ Autodesk Fusion on x86-64 NixOS, using a dedicated, Nix-pinned Wine environment.
 The package downloads Fusion directly from Autodesk; it does not run a Linux
 distribution installer or require Bottles, Distrobox, `nix-ld`, or an FHS shell.
 
-**Status:** installation, browser sign-in, and launch to the modelling workspace have been tested on
-NixOS 26.05 with Hyprland/Xwayland, Radeon 860M, Wine Staging 11.16, and DXVK 2.7.1
-(September 2026). Modelling, save/export, and updates are not yet verified.
+**Status:** installation, browser sign-in, sketch interaction, a shaded solid body,
+and the populated Data Panel have been observed on NixOS 26.05 with
+Hyprland/Xwayland, Radeon 860M, patched Wine Staging 11.16, and OpenGL Core
+(October 2026). Save/reopen, STEP export, and updates are not yet verified;
+some UI positioning/text artifacts remain. This is not a claim that every
+Fusion feature or GPU works. The default launcher has also been cold-started
+successfully with authentication and Data Panel loading confirmed in its logs.
 Autodesk does not support Linux.
 You need an Autodesk account and a valid Fusion entitlement, including an
 eligible personal-use or educational license.
@@ -56,6 +60,13 @@ The callback contains a short-lived credential: do not post it in logs or issues
 The login command does not print it. Successful delivery to Identity Manager
 does not itself prove that Autodesk accepted the login.
 
+Before launching Fusion, the wrapper starts the installer-selected Identity
+Manager and waits up to 30 seconds for a fresh readiness report. This avoids a
+startup race observed as `IDSDK_E_SERVER_PROCESS_NOT_READY` / "Unable to sign in".
+An already-running ready Identity Manager is reused when its new
+duplicate-instance report confirms it. A timeout reports an error instead of killing processes,
+clearing credentials, or launching into a known-unready sign-in service.
+
 If a local terminal or browser handler lacks `DISPLAY`, the wrapper reads the
 local Xwayland display from your systemd user manager. An existing `DISPLAY` is
 preserved; SSH sessions never automatically attach to the local desktop. If
@@ -63,13 +74,15 @@ discovery fails, use a desktop terminal with `DISPLAY` set.
 
 ### Graphics
 
-The default is DX11 through DXVK for the modelling viewport, builtin D3D9 for
-legacy UI components, and OpenGL for Qt rendering. Wine uses X11/Xwayland even
-inside a Wayland desktop; native Wine Wayland is not the initial compatibility
-target. To try the OpenGL viewport fallback, close Fusion first:
+Fresh installations default to **OpenGL Core for the modelling viewport,
+OpenGL for Qt, and `gl` for Chromium**, with builtin D3D9 for legacy UI components.
+Wine uses X11/Xwayland even inside a Wayland desktop; native Wine Wayland is not
+the initial compatibility target. Existing prefixes keep their selected graphics
+backend; to apply the tested combination to an older installation, close Fusion
+and its Wine session first:
 
 ```console
-nix run . -- graphics opengl
+nix run . -- graphics opengl gl
 nix run .
 ```
 
@@ -79,9 +92,10 @@ graceful Windows-session shutdown, then retry changing graphics or updating.
 Save and close documents first. This command never uses force/kill flags; if
 Wine does not stop within 15 seconds, it reports an error rather than killing it.
 
-Use `graphics dxvk` to switch back, or `install --graphics opengl` for a fresh
-OpenGL setup. Unrelated preferences and TLS certificate verification are not
-changed. No version-coupled Qt DLL replacements or unverified SpaceMouse DLLs
+Use `graphics dxvk` to test DX11 through DXVK, or `install --graphics dxvk` for
+a fresh DXVK setup. DXVK remains installed but is not the default viewport path.
+Unrelated preferences and TLS certificate verification are not changed.
+No version-coupled Qt DLL replacements or unverified SpaceMouse DLLs
 are installed.
 
 The viewport, Qt UI, and embedded Chromium browser use separate rendering
@@ -94,30 +108,60 @@ nix run . -- graphics dxvk vulkan
 
 This combination has AMD success reports upstream, but is not a universal fix.
 Use `opengles` or `gl` instead of `vulkan` to test alternatives. Omitting the
-second argument preserves your existing Chromium setting (initially `opengles`).
+second argument preserves your existing Chromium setting (initially `gl`).
 The wrapper removes inherited Linux Qt platform/theme/plugin paths so Fusion
 uses its bundled Windows Qt.
 
-### Wine black-canvas regression (experimental)
+### Wine compatibility fixes
 
 The current upstream tracker reports a black modelling canvas with Wine 11.11+
 that briefly renders when resizing or opening panels. Both DXVK and OpenGL can
 be affected. Wine issue [60190](https://bugs.winehq.org/show_bug.cgi?id=60190)
 proposes an RSA/SymCrypt compatibility fix, reported to restore Fusion in the
-Lolig4 fork. Its diagnosis has not yet been confirmed by Wine maintainers.
+Lolig4 fork. The default package applies this small source patch to the pinned
+Wine. Locally, patched Wine restored sketch content with DXVK, while switching
+to OpenGL Core also restored the background and shaded solid rendering. The
+upstream diagnosis is not yet confirmed by Wine maintainers.
 
-An experimental package applies that small source patch to the pinned Wine:
+Building patched Wine from source can take substantial time and disk space;
+without a binary cache, expect a full Wine build on the first `nix build` or
+`nix run`. `fusion360-patched` remains an alias for the default package. For
+controlled comparisons, `fusion360-unpatched` uses unmodified Wine:
 
 ```console
-nix build .#fusion360-patched --out-link result-patched
-# Close Fusion and stop its Wine session before switching runtimes.
-./result-patched/bin/fusion360
+nix build .#fusion360-unpatched --out-link result-unpatched
 ```
 
-It uses the same mutable prefix. Back up the stopped prefix before testing, and
-never run the patched and unpatched runtimes simultaneously. The default package
-remains unpatched pending live validation. Building patched Wine from source may
-take substantial time and disk space.
+Both packages use the same mutable prefix. Back up the stopped prefix before
+switching runtimes, and never run patched and unpatched Wine simultaneously.
+
+#### Blank Data Panel and browser sandbox
+
+Wine 11.16 also has a Chromium sandbox compatibility issue reported in
+[Lolig4 issue #10](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/issues/10).
+The wrapper defaults to `QTWEBENGINE_DISABLE_SANDBOX=1`. This restored the Data
+Panel locally without clearing caches, signing out, disabling TLS verification,
+or retaining the unsuccessful `DataPanel.UseNewWebImplementation` registry tweak.
+
+**Security trade-off:** Qt WebEngine's sandbox is disabled, reducing isolation
+of web content. A dedicated Wine prefix is not an operating-system sandbox. Only
+use this with a trusted Fusion installation and account content. To opt out and
+retest sandbox support with a compatible runtime:
+
+```console
+FUSION360_WEBENGINE_SANDBOX=1 nix run .
+```
+
+Stop the existing Wine session before changing this environment setting; running
+browser processes cannot inherit a new launch environment. `doctor` reports the
+effective value. The workaround applies to bundled Qt WebEngine, not a blanket
+disabling of security for the Linux browser or WebView2.
+
+Qt tests whether `QTWEBENGINE_DISABLE_SANDBOX` is present, not its numeric value;
+setting it to `0` still disables the sandbox. The wrapper's explicit opt-in above
+removes that Qt variable instead.
+
+#### Virtual desktop (experimental)
 
 To isolate Wine's child-window presentation from your Wayland window manager,
 close Fusion and try a virtual desktop:
@@ -225,7 +269,7 @@ The flat layout keeps runtime dependency declarations beside each command:
 - `install.nix`: `writeShellApplication` for installation and updates.
 - `fusion360.nix`: `writeShellApplication` for launch, sign-in, and diagnostics.
 - `common.nix`: shared prefix ownership, locks, active deployment lookup, and rendering settings.
-- `wine.nix`: experimental Wine RSA compatibility patch for the black-canvas regression.
+- `wine.nix`: Wine RSA compatibility patch for the black-canvas regression.
 - `checks.nix`: non-interactive command-line regression tests.
 
 Shell scripts are syntax-checked and ShellChecked during the Nix build; desktop
@@ -246,6 +290,7 @@ The scripts here are a separate Nix-native implementation.
 - [Current black-workspace report (Codeberg #694)](https://codeberg.org/cryinkfly/Autodesk-Fusion-360-on-Linux/issues/694)
 - [Lolig4 compatibility fork](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux)
 - [Wine RSA/SymCrypt regression report (#60190)](https://bugs.winehq.org/show_bug.cgi?id=60190)
+- [Wine 11.16 blank Data Panel / sandbox report (Lolig4 #10)](https://codeberg.org/Lolig4/Autodesk-Fusion-360-on-Linux/issues/10)
 
 This wrapper is MIT-licensed. Fusion and Microsoft components retain their own
 licenses and are downloaded from their vendors, not redistributed by this flake.
